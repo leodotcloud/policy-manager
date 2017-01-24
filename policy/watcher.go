@@ -37,6 +37,7 @@ type watcher struct {
 	signalCh           chan os.Signal
 	exitCh             chan int
 	defaultNetwork     *metadata.Network
+	defaultSubnet      string
 	stacks             []metadata.Stack
 	services           []metadata.Service
 	appliedIPsets      map[string]map[string]bool
@@ -142,6 +143,17 @@ func (w *watcher) onChangeNoError(version string) {
 	if err := w.onChange(version); err != nil {
 		logrus.Errorf("Failed to apply network NetworkPolicy: %v", err)
 	}
+}
+
+func getBridgeSubnet(network *metadata.Network) (string, error) {
+	conf, _ := network.Metadata["cniConfig"].(map[string]interface{})
+	for _, file := range conf {
+		props, _ := file.(map[string]interface{})
+		bridgeSubnet, _ := props["bridgeSubnet"].(string)
+		return bridgeSubnet, nil
+	}
+
+	return "", fmt.Errorf("Couldn't find bridgeSubnet for network: %v", network)
 }
 
 func (w *watcher) getDefaultNetwork() (*metadata.Network, error) {
@@ -528,7 +540,15 @@ func (w *watcher) fetchInfoFromMetadata() error {
 	}
 	logrus.Debugf("defaultNetwork: %#v", defaultNetwork)
 
+	defaultSubnet, err := getBridgeSubnet(defaultNetwork)
+	if err != nil {
+		logrus.Errorf("Error while finding default subnet: %v", err)
+		return err
+	}
+	logrus.Debugf("defaultSubnet: %#v", defaultSubnet)
+
 	w.defaultNetwork = defaultNetwork
+	w.defaultSubnet = defaultSubnet
 	w.selfHost = &selfHost
 	w.stacks = stacks
 
@@ -715,15 +735,23 @@ func (w *watcher) run(args ...string) error {
 }
 
 func (w *watcher) insertBaseRules() error {
-	if executeCommandNoStderr(fmt.Sprintf("iptables -w -C %v -j %v", hookToChain, cattleNetworkPolicyChainName)) != nil {
-		return w.run("iptables", "-w", "-I", hookToChain, "-j", cattleNetworkPolicyChainName)
+	checkRule := fmt.Sprintf("iptables -w -C %v -d %v -s %v -j %v",
+		hookToChain, w.defaultSubnet, w.defaultSubnet, cattleNetworkPolicyChainName)
+	if executeCommandNoStderr(checkRule) != nil {
+		addRule := fmt.Sprintf("iptables -w -I %v -d %v -s %v -j %v",
+			hookToChain, w.defaultSubnet, w.defaultSubnet, cattleNetworkPolicyChainName)
+		return executeCommand(addRule)
 	}
 	return nil
 }
 
 func (w *watcher) deleteBaseRules() error {
-	if executeCommandNoStderr(fmt.Sprintf("iptables -w -C %v -j %v", hookToChain, cattleNetworkPolicyChainName)) == nil {
-		return w.run("iptables", "-w", "-D", hookToChain, "-j", cattleNetworkPolicyChainName)
+	checkRule := fmt.Sprintf("iptables -w -C %v -d %v -s %v -j %v",
+		hookToChain, w.defaultSubnet, w.defaultSubnet, cattleNetworkPolicyChainName)
+	if executeCommandNoStderr(checkRule) == nil {
+		delRule := fmt.Sprintf("iptables -w -D %v -d %v -s %v -j %v",
+			hookToChain, w.defaultSubnet, w.defaultSubnet, cattleNetworkPolicyChainName)
+		return executeCommand(delRule)
 	}
 	return nil
 }
