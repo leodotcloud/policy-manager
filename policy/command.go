@@ -8,6 +8,18 @@ import (
 	"github.com/Sirupsen/logrus"
 )
 
+func execCmdNoStdoutNoStderr(cmd *exec.Cmd) error {
+	logrus.Debugf("cmd: %+v", cmd)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func execCmdNoStderr(cmd *exec.Cmd) error {
 	logrus.Debugf("cmd: %+v", cmd)
 	cmd.Stdout = os.Stdout
@@ -39,6 +51,11 @@ func buildCommand(cmdStr string) *exec.Cmd {
 func executeCommandNoStderr(cmdStr string) error {
 	cmd := buildCommand(cmdStr)
 	return execCmdNoStderr(cmd)
+}
+
+func executeCommandNoStdoutNoStderr(cmdStr string) error {
+	cmd := buildCommand(cmdStr)
+	return execCmdNoStdoutNoStderr(cmd)
 }
 
 func executeCommand(cmdStr string) error {
